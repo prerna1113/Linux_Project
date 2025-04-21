@@ -1,0 +1,118 @@
+------------------------------------------------------------------------------------
+hadoop-3.3.6/bin/hdfs namenode -format
+export PDSH_RCMD_TYPE=ssh
+start-all.sh
+hdfs dfs -mkdir /input
+hdfs dfs -put /home/hrushi/Downloads/covid_19_india.csv /input
+
+------------------------------------------------------------------------------------
+
+gedit CovidAnalysis.java
+
+-------------------------------------------------------------------------------------
+
+import java.io.IOException;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.IntWritable;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+public class CovidAnalysis {
+
+    public static class CovidMapper extends Mapper<LongWritable, Text, Text, IntWritable> {
+        @Override
+        public void map(LongWritable key, Text value, Context context)
+                throws IOException, InterruptedException {
+            String line = value.toString();
+            String[] parts = line.split(",");
+            if (parts.length > 8) {
+                try {
+                    String state = parts[3];
+                    int confirmedCases = Integer.parseInt(parts[8]);
+                    context.write(new Text(state), new IntWritable(confirmedCases));
+                } catch (NumberFormatException | ArrayIndexOutOfBoundsException e) {
+                    // Handle parsing errors
+                }
+            }
+        }
+    }
+
+    public static class CovidReducer extends Reducer<Text, IntWritable, Text, IntWritable> {
+        @Override
+        public void reduce(Text key, Iterable<IntWritable> values, Context context)
+                throws IOException, InterruptedException {
+            int sum = 0;
+            for (IntWritable val : values) {
+                sum += val.get();
+            }
+            context.write(key, new IntWritable(sum));
+        }
+    }
+
+    public static void main(String[] args) throws Exception {
+        if (args.length != 2) {
+            System.err.println("Usage: CovidAnalysis <input path> <output path>");
+            System.exit(-1);
+        }
+
+        Configuration conf = new Configuration();
+        Job job = Job.getInstance(conf, "Covid Data Analysis");
+        job.setJarByClass(CovidAnalysis.class);
+        job.setMapperClass(CovidMapper.class);
+        job.setReducerClass(CovidReducer.class);
+        job.setOutputKeyClass(Text.class);
+        job.setOutputValueClass(IntWritable.class);
+
+        FileInputFormat.addInputPath(job, new Path(args[0]));
+        FileOutputFormat.setOutputPath(job, new Path(args[1]));
+
+        System.exit(job.waitForCompletion(true) ? 0 : 1);
+    }
+}
+
+
+------------------------------------------------------------------------------------
+
+hadoop com.sun.tools.javac.Main CovidAnalysis.java
+jar cf covid_analysis.jar CovidAnalysis*.class
+hadoop jar covid_analysis.jar CovidAnalysis /input/covid_19_india.csv /output
+
+
+------------------------------------------------------------------------------------
+
+
+gedit plot_covid.py
+
+------------------------------------------------------------------------------------
+
+import matplotlib.pyplot as plt
+
+states = []
+cases = []
+
+with open("covid_results.txt", "r") as f:
+    for line in f:
+        state, case = line.strip().split("\t")
+        states.append(state)
+        cases.append(int(case))
+
+plt.figure(figsize=(15, 7))
+plt.bar(states, cases)
+plt.xticks(rotation=90)
+plt.xlabel("States")
+plt.ylabel("Total Confirmed Cases")
+plt.title("Total Confirmed COVID-19 Cases by State")
+plt.tight_layout()
+plt.show()
+-------------------------------------------------------------------------------------
+
+hdfs dfs -get /output/part-r-00000 covid_results.txt
+
+python3 plot_covid.py
+
